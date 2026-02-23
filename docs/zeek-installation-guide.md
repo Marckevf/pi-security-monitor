@@ -1,23 +1,21 @@
 # Zeek Network Security Monitor — Installation & Configuration Guide
 
-*Raspberry Pi Security Monitoring Project — Phase 2: Behavioral Analysis & Network Logging*
+Zeek (formerly Bro) is an open-source passive network analysis framework. Unlike signature-based IDS tools like Suricata, Zeek doesn't alert on known threats — it generates detailed structured logs of all network activity, giving you full visibility into what's happening on your network.
+
+In this project, Zeek runs on a Raspberry Pi acting as a wireless access point, monitoring all traffic from connected devices in real time.
 
 ---
 
-## Overview
+## What Zeek Logs
 
-Zeek (formerly Bro) is an open-source passive network analysis framework that inspects all passing traffic. Unlike signature-based IDS tools like Suricata, Zeek generates structured, detailed logs of all network activity — providing deep behavioral visibility into what is happening on your network.
-
-In this project, Zeek is deployed on a Raspberry Pi acting as a wireless access point, monitoring all traffic from connected client devices in real-time.
-
-**What Zeek logs:**
-- Every connection (source, destination, protocol, duration, bytes)
+- Every network connection — source/destination IP, port, protocol, duration, bytes transferred
 - DNS queries and responses
-- HTTP requests, responses, and headers
+- HTTP requests and responses
 - SSL/TLS certificate details
-- DHCP transactions and IP assignments
+- DHCP leases and device assignments
 - SSH sessions
-- Protocol anomalies and suspicious behavior
+- File transfers observed on the network
+- Protocol anomalies and unexpected behavior
 
 ---
 
@@ -27,9 +25,8 @@ In this project, Zeek is deployed on a Raspberry Pi acting as a wireless access 
 |-------------|---------|
 | Platform | Raspberry Pi 4 (2GB+ RAM recommended) |
 | OS | Raspberry Pi OS (Debian Bullseye/Bookworm or later) |
-| Interface | Dedicated interface for monitoring AP traffic (e.g. `wlan1`) |
-| Storage | USB drive recommended — logs can be large |
-| Disk Space | ~500MB for Zeek install; log volume varies by traffic |
+| Network | Dedicated interface for monitoring (e.g. `wlan1`) |
+| Storage | USB drive recommended — logs grow quickly |
 
 ---
 
@@ -47,29 +44,27 @@ sudo apt update && sudo apt upgrade -y
 sudo apt install zeek -y
 ```
 
-This installs Zeek along with `libpcap` for packet capture.
-
-### Step 3: Verify Installation
-
-```bash
-zeek --version
-zeekctl --version
-```
-
-### Step 4: Add Zeek to PATH
+### Step 3: Add Zeek to PATH
 
 ```bash
 echo 'export PATH=$PATH:/opt/zeek/bin' >> ~/.bashrc
 source ~/.bashrc
 ```
 
+### Step 4: Verify
+
+```bash
+zeek --version
+zeekctl --version
+```
+
 ---
 
 ## Configuration
 
-Configuration files are in `/etc/zeek/` (or `/opt/zeek/etc/` depending on installation method).
+Configuration files are in `/etc/zeek/` or `/opt/zeek/etc/` depending on your installation method.
 
-### Step 5: Set Monitoring Interface
+### Set Monitoring Interface
 
 Edit `node.cfg`:
 
@@ -81,12 +76,12 @@ sudo nano /etc/zeek/node.cfg
 [zeek]
 type=standalone
 host=localhost
-interface=wlan1    # Change to your monitoring interface
+interface=wlan1    # Replace with your monitoring interface
 ```
 
-### Step 6: Define Local Networks
+### Define Local Networks
 
-Edit `networks.cfg` to tell Zeek which addresses are internal:
+Edit `networks.cfg` so Zeek knows which addresses are internal:
 
 ```bash
 sudo nano /etc/zeek/networks.cfg
@@ -98,11 +93,11 @@ sudo nano /etc/zeek/networks.cfg
 172.16.0.0/12       Private network
 ```
 
-Add your specific AP subnet too (e.g., `10.3.141.0/24`).
+Add your specific AP subnet as well.
 
-### Step 7: Set Log Directory
+### Set Log Directory
 
-Edit `zeekctl.cfg` to redirect logs away from the default location:
+Edit `zeekctl.cfg` to store logs in your preferred location:
 
 ```bash
 sudo nano /etc/zeek/zeekctl.cfg
@@ -119,7 +114,7 @@ sudo mkdir -p /mnt/security-logs/zeek
 sudo chown YOUR_USERNAME:YOUR_USERNAME /mnt/security-logs/zeek
 ```
 
-### Step 8: Enable JSON Output
+### Enable JSON Output
 
 Edit `site/local.zeek`:
 
@@ -133,7 +128,7 @@ Add at the bottom:
 @load tuning/json-logs
 ```
 
-This outputs all logs as JSON instead of TSV — required for Fluent Bit and Elasticsearch ingestion.
+JSON output is required for forwarding logs to Elasticsearch or any SIEM.
 
 ---
 
@@ -145,13 +140,12 @@ This outputs all logs as JSON instead of TSV — required for Fluent Bit and Ela
 sudo zeekctl deploy
 ```
 
-`deploy` runs install, start, and check in sequence.
+`deploy` runs install, start, and check in sequence. Run this after any configuration change.
 
 ### Enable on Boot
 
 ```bash
 sudo systemctl enable zeek
-sudo systemctl is-enabled zeek
 ```
 
 ---
@@ -163,46 +157,41 @@ sudo systemctl is-enabled zeek
 | `sudo zeekctl status` | Check if Zeek is running |
 | `sudo zeekctl start` | Start Zeek |
 | `sudo zeekctl stop` | Stop Zeek |
-| `sudo zeekctl restart` | Restart (apply config changes) |
-| `sudo zeekctl deploy` | Full redeploy (init + start + check) |
-| `sudo zeekctl check` | Validate config without starting |
-| `sudo zeekctl diag` | Show diagnostic info |
+| `sudo zeekctl restart` | Restart and apply config changes |
+| `sudo zeekctl deploy` | Full redeploy — use after config edits |
+| `sudo zeekctl diag` | Show diagnostic info for troubleshooting |
 
 ---
 
 ## Log Files Reference
 
-Active logs are in `YOUR_LOG_DIR/current/`:
+Active logs are written to `YOUR_LOG_DIR/current/`:
 
 | Log File | Contents |
 |----------|----------|
-| `conn.log` | Every connection: src/dst IP, port, protocol, duration, bytes |
+| `conn.log` | Every connection — src/dst IP, port, protocol, duration, bytes |
 | `dns.log` | All DNS queries and responses |
-| `http.log` | HTTP requests: method, URL, response code, user-agent |
-| `ssl.log` | SSL/TLS sessions and certificate info |
-| `dhcp.log` | DHCP leases: MAC address, hostname, assigned IP |
-| `ssh.log` | SSH connections and auth outcomes |
+| `http.log` | HTTP requests — method, URL, response code, user-agent |
+| `ssl.log` | SSL/TLS sessions and certificate details |
+| `dhcp.log` | DHCP leases — MAC address, hostname, assigned IP |
+| `ssh.log` | SSH connections and authentication outcomes |
 | `weird.log` | Protocol anomalies and unexpected behavior |
-| `notice.log` | Alerts and notable events from Zeek policy scripts |
+| `notice.log` | Alerts generated by Zeek policy scripts |
 | `files.log` | Files observed or extracted from network traffic |
 
-### View Logs in Real-Time
+### View Logs in Real Time
 
 ```bash
-# Watch DNS queries
-sudo tail -f /mnt/security-logs/zeek/current/dns.log | python3 -m json.tool
-
-# Watch all connections
 sudo tail -f /mnt/security-logs/zeek/current/conn.log
+sudo tail -f /mnt/security-logs/zeek/current/dns.log | python3 -m json.tool
 ```
 
-### Search Historical (Compressed) Logs
+### Search Archived Logs
+
+Rotated logs are compressed as `.gz` files in dated folders:
 
 ```bash
-# Search for a specific IP
 sudo zcat /mnt/security-logs/zeek/2026-02-21/conn*.log.gz | grep "192.168.1.5"
-
-# Find DNS queries for a domain
 sudo zcat /mnt/security-logs/zeek/2026-02-21/dns*.log.gz | grep "example.com"
 ```
 
@@ -210,21 +199,18 @@ sudo zcat /mnt/security-logs/zeek/2026-02-21/dns*.log.gz | grep "example.com"
 
 ## Log Rotation
 
-Zeek rotates logs hourly automatically. Configure retention in `zeekctl.cfg`:
+Zeek rotates logs hourly automatically. Set retention in `zeekctl.cfg`:
 
 ```ini
-LogRotationInterval = 3600    # Rotate every hour (seconds)
+LogRotationInterval = 3600    # Rotate every hour
 LogExpireInterval = 7         # Delete logs older than 7 days
 ```
 
-Alternatively, use a cron job for deletion:
+Alternatively, use a cron job:
 
 ```bash
 sudo crontab -e
-```
-
-Add:
-```
+# Add:
 0 2 * * * find /mnt/security-logs -type f -mtime +7 -delete
 ```
 
@@ -238,43 +224,37 @@ Add:
 sudo zeekctl diag
 ```
 
-Common causes:
-- Wrong interface name in `node.cfg`
-- Permission errors on log directory
-- `libpcap` unable to open interface
+Common causes: wrong interface name in `node.cfg`, permission issues on the log directory, or the interface doesn't exist. Verify:
 
-Verify the interface exists:
 ```bash
 ip link show wlan1
 ```
 
 ### No Logs Being Generated
 
-Verify Zeek can see traffic:
+Test that Zeek can see traffic on the interface:
+
 ```bash
 sudo tcpdump -i wlan1 -c 10
 ```
 
-If no packets appear, the interface may not be in promiscuous mode or traffic isn't being routed through it.
+If no packets appear, traffic isn't being routed through that interface or it isn't in promiscuous mode.
 
 ### High CPU Usage
 
-Monitor Zeek CPU:
 ```bash
 top -p $(pgrep zeek)
 ```
 
-If consistently above 80%, reduce logging verbosity in `local.zeek` by commenting out less critical log streams.
+If CPU is consistently above 80%, reduce logging verbosity in `local.zeek` by commenting out less critical log streams.
 
 ---
 
-## Integration with Suricata
-
-Zeek and Suricata serve complementary roles:
+## How Zeek Complements Suricata
 
 | Tool | Role |
 |------|------|
 | Suricata | Signature-based IDS — alerts on known attack patterns |
-| Zeek | Behavioral logging — records all network activity for analysis and forensics |
+| Zeek | Behavioral logging — records all activity for analysis and forensics |
 
-In Phase 3, both Suricata and Zeek logs are forwarded to Elasticsearch using Fluent Bit. See `elasticsearch-setup-guide.md` for details.
+Running both gives you detection (Suricata) and full context (Zeek). See `elasticsearch-setup-guide.md` for forwarding both to Kibana.

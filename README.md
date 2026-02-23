@@ -66,16 +66,19 @@ pi-security-monitor/
 ├── README.md
 ├── configs/
 │   ├── suricata/
-│   │   └── suricata.yaml          # Suricata main config
+│   │   └── suricata.yaml              # Suricata main config
 │   ├── zeek/
-│   │   ├── node.cfg               # Interface configuration
-│   │   └── zeekctl.cfg            # ZeekControl settings
+│   │   ├── node.cfg                   # Interface configuration
+│   │   └── zeekctl.cfg                # ZeekControl settings
 │   ├── fluent-bit/
-│   │   └── fluent-bit.conf        # Log forwarding configuration
-│   └── docker-compose.yml         # Elasticsearch + Kibana (ports bound to 0.0.0.0 for Tailscale)
+│   │   └── fluent-bit.conf            # Log forwarding configuration
+│   └── docker-compose.yml             # Elasticsearch + Kibana (ports bound to 0.0.0.0 for Tailscale)
 └── docs/
-    ├── zeek-setup-guide.md        # Full Zeek installation walkthrough
-    └── elasticsearch-setup-guide.md  # Elasticsearch + Kibana + Fluent Bit setup
+    ├── zeek-installation-guide.md     # Zeek installation and configuration
+    ├── elasticsearch-setup-guide.md   # Elasticsearch + Kibana + Fluent Bit setup
+    ├── suricata-troubleshooting.md    # Suricata interface and systemd override fixes
+    ├── tailscale-dns-troubleshooting.md  # Fixing DNS conflicts with Tailscale
+    └── raspap-boot-timing-fix.md      # Resolving RaspAP boot loop race conditions
 ```
 
 ---
@@ -88,7 +91,7 @@ pi-security-monitor/
 | Phase 2 | Suricata IDS + Zeek NSM deployment and configuration | ✅ Complete |
 | Phase 3 | Fluent Bit log forwarding to Elasticsearch over Tailscale | ✅ Complete |
 | Phase 4 | End-to-end testing and validation | ✅ Complete |
-| Phase 5 | Kibana dashboards — live visualization and alerting | ✅ Complete |
+| Phase 5B | Kibana dashboards — live visualization and alerting | ✅ Complete |
 
 ---
 

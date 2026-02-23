@@ -1,255 +1,177 @@
-# Suricata Configuration Troubleshooting Guide
+# Suricata IDS — Configuration & Troubleshooting Guide
 
-*Resolving systemd service override conflicts and interface configuration issues*
+Suricata is an open-source intrusion detection system (IDS) that inspects network traffic against a library of threat signatures. This guide covers common configuration issues encountered when deploying Suricata on a Raspberry Pi and how to resolve them.
 
 ---
 
-## Problem Overview
+## Understanding Suricata's Configuration Layers
+
+Suricata reads settings from two places, and they can conflict:
+
+**1. `/etc/suricata/suricata.yaml`** — the main config file. Controls interface selection, log paths, rule locations, and output formats.
+
+**2. The systemd service file** — controls how Suricata is launched. Command-line arguments here take priority over the config file.
+
+This priority order is the source of most configuration issues. If the systemd service launches Suricata with `--af-packet` and no interface specified, Suricata will default to the first available interface (usually `eth0`) regardless of what's set in `suricata.yaml`.
+
+---
+
+## Issue 1: Suricata Monitoring the Wrong Interface
 
 ### Symptoms
+- Suricata starts without errors but captures no traffic
+- Logs reference the wrong interface
+- No alerts generated despite active network traffic
 
-- Suricata starts successfully but monitors the wrong network interface
-- Configuration file changes to interface setting are ignored
-- No threat signatures loaded (0 rules)
-- No log files created in configured log directory
-- Logs show `interface: eth0` despite configuring `wlan1` (or your intended interface)
+### Diagnosis
 
-### Root Cause
-
-Suricata has two configuration layers that can conflict:
-
-**1. Configuration File (`/etc/suricata/suricata.yaml`)**
-Contains detailed settings including interface selection, log directories, and rule paths.
-
-**2. Systemd Service File (`/usr/lib/systemd/system/suricata.service`)**
-Contains the `ExecStart` command that launches Suricata with command-line arguments.
-
-**Priority order:** Command-line arguments override configuration file settings.
-
-When the systemd service specifies `--af-packet` without an interface, Suricata defaults to the first available interface (usually `eth0`), **overriding the configuration file setting.**
-
----
-
-## Diagnostic Steps
-
-### Step 1: Verify Configuration File
+Check which interface Suricata is actually using:
 
 ```bash
-grep "interface:" /etc/suricata/suricata.yaml
+sudo grep -i "interface\|creating.*threads" /var/log/suricata/suricata.log
 ```
 
-Expected output: `- interface: wlan1` (or your intended interface).
-
-### Step 2: Check Which Interface Suricata Is Actually Using
-
-```bash
-sudo cat /var/log/suricata/suricata.log | grep -E 'wlan|eth0'
-```
-
-**Problem indicators:**
-- `eth0: creating 4 threads` — wrong interface
-- `eth0: packets: 0` — no traffic captured
-
-**Success indicators:**
-- `wlan1: creating 4 threads` — correct interface
-- `wlan1: packets: 12239` — traffic being captured
-
-### Step 3: Inspect Systemd Service
+Inspect the systemd service to see how Suricata is being launched:
 
 ```bash
 sudo systemctl cat suricata
 ```
 
-Look for the `ExecStart` line. If it shows:
+If the `ExecStart` line looks like this:
 ```
-ExecStart=/usr/bin/suricata -D --af-packet -c /etc/suricata/suricata.yaml --pidfile /run/suricata.pid
-```
-
-The `--af-packet` without an interface name is the problem — Suricata will choose the default interface.
-
-### Step 4: Check for Missing Rules
-
-```bash
-sudo cat /var/log/suricata/suricata.log | grep "rule"
+ExecStart=/usr/bin/suricata -D --af-packet -c /etc/suricata/suricata.yaml
 ```
 
-**Problem indicators:**
-```
-Warning: detect: No rule files match the pattern
-Info: detect: 0 signatures processed
-```
+The `--af-packet` flag without an interface name is the problem.
 
-This means `suricata-update` failed or rules weren't installed correctly.
+### Solution: Create a Systemd Override
 
----
-
-## Solution: Create a Systemd Override
-
-The correct fix is a systemd override that explicitly specifies the monitoring interface. This preserves the original service file and survives package upgrades.
-
-### Step 1: Create Override
+Rather than editing the original service file (which gets overwritten on package upgrades), create an override:
 
 ```bash
 sudo systemctl edit suricata
 ```
 
-This creates `/etc/systemd/system/suricata.service.d/override.conf`.
-
-### Step 2: Add Override Configuration
+Add the following:
 
 ```ini
 [Service]
 ExecStart=
-ExecStart=/usr/bin/suricata -D --af-packet=wlan1 -c /etc/suricata/suricata.yaml --pidfile /run/suricata.pid
+ExecStart=/usr/bin/suricata -D --af-packet=YOUR_INTERFACE -c /etc/suricata/suricata.yaml --pidfile /run/suricata.pid
 ```
 
-> Replace `wlan1` with your actual monitoring interface.
+Replace `YOUR_INTERFACE` with your monitoring interface (e.g. `wlan1`, `eth0`, `enp3s0`).
 
-**Why two `ExecStart` lines?**
-- `ExecStart=` (empty) clears the original command — required by systemd before redefining
-- `ExecStart=/usr/bin/suricata...` sets the new command with the interface explicitly specified
+> **Why two `ExecStart` lines?** The first empty line clears the original command — systemd requires this before redefining it. The second line sets the new command with the interface explicitly specified.
 
-### Step 3: Reload and Restart
+Apply the changes:
 
 ```bash
 sudo systemctl daemon-reload
 sudo systemctl restart suricata
 ```
 
----
-
-## Verification
-
-### Check Status
+### Verification
 
 ```bash
 sudo systemctl status suricata
+sudo grep "YOUR_INTERFACE" /var/log/suricata/suricata.log
 ```
 
-Expected: `Active: active (running)`
-
-### Verify Interface
-
-```bash
-sudo tail -100 /var/log/suricata/suricata.log | grep wlan1
-```
-
-Expected:
-```
-Info: runmodes: wlan1: creating 4 threads
-Notice: device: wlan1: packets: 12239, drops: 0
-```
-
-### Verify Rules Loaded
-
-```bash
-sudo tail -100 /var/log/suricata/suricata.log | grep signatures
-```
-
-Expected:
-```
-Info: detect: 48549 signatures processed...
-```
+You should see threads created on your interface and packets being captured.
 
 ---
 
-## Additional Issues
+## Issue 2: No Rules Loaded
 
-### YAML Syntax Error — Variable Not Defined
+### Symptoms
+- Suricata starts but generates no alerts
+- Logs show `0 signatures processed`
 
-**Symptom:**
-```
-Error: Variable " HOME_NET" is not defined
-```
+### Diagnosis
 
-**Cause:** Line break or extra space in a YAML variable reference.
-
-**Example of broken config:**
-```yaml
-MODBUS_CLIENT: "$
-HOME_NET"
+```bash
+sudo grep "signatures" /var/log/suricata/suricata.log
 ```
 
-**Fix:** Edit `/etc/suricata/suricata.yaml` and join the broken line:
-```yaml
-MODBUS_CLIENT: "$HOME_NET"
+### Solution
+
+Run the rule updater and restart:
+
+```bash
+sudo suricata-update
+sudo systemctl restart suricata
 ```
 
-### Missing Suricata User Account
+Verify rules loaded:
 
-**Symptom:**
-```
-chown: invalid user: 'suricata:suricata'
+```bash
+sudo grep "signatures processed" /var/log/suricata/suricata.log
 ```
 
-**Fix:**
+A healthy install typically shows 40,000+ signatures loaded.
+
+---
+
+## Issue 3: No Log Files Created
+
+### Symptoms
+- Suricata is running but the configured log directory is empty
+- Logs are appearing in `/var/log/suricata/` instead of your custom path
+
+### Cause
+
+If Suricata is writing to the default location rather than your configured path, the systemd override likely hasn't been applied yet, or the log directory has incorrect permissions.
+
+### Solution
+
+Verify your log directory exists with correct ownership:
+
+```bash
+sudo mkdir -p /your/log/directory
+sudo chown -R suricata:suricata /your/log/directory
+```
+
+If the `suricata` system user doesn't exist:
+
 ```bash
 sudo useradd -r -M -s /usr/sbin/nologin suricata
 ```
 
-- `-r` — system account
-- `-M` — no home directory
-- `-s /usr/sbin/nologin` — no shell access
+Restart Suricata:
 
-### No Log Files Created
-
-**Possible causes:**
-1. Suricata monitoring wrong interface (no traffic to log)
-2. Permission denied on log directory
-3. Logs being written to default location instead of configured path
-
-**Check default log location:**
 ```bash
-ls -lh /var/log/suricata/
+sudo systemctl restart suricata
 ```
-
-If logs exist here, the systemd override hasn't been applied yet. Suricata is using the default path instead of your configured one.
-
-**Check permissions:**
-```bash
-ls -ld /path/to/your/log/directory/
-```
-
-Should show `suricata` as owner.
 
 ---
 
-## Suricata Log Files Reference
+## Log Files Reference
 
-| Log File | Contents |
-|----------|----------|
-| `fast.log` | Quick alert summary — one line per alert with timestamp, signature, and IPs |
-| `eve.json` | Detailed JSON logs — alerts, flows, DNS, HTTP, SSL. Used for SIEM forwarding |
-| `stats.log` | Performance stats — packet rates, drops, memory usage |
-| `suricata.log` | Startup messages, config parsing, rule loading, operational info |
-
----
-
-## Prevention
-
-On fresh Suricata installations:
-1. Install Suricata
-2. Immediately create systemd override with explicit interface
-3. Edit `/etc/suricata/suricata.yaml` for other settings
-4. Run `suricata-update` to install rules
-5. Create `suricata` user if needed
-6. Set log directory permissions
-7. Start service and verify in logs
+| File | Contents |
+|------|----------|
+| `eve.json` | Full JSON output — alerts, flows, DNS, HTTP, SSL. Primary file for SIEM forwarding |
+| `fast.log` | One-line alert summaries with timestamp, signature name, and IPs |
+| `stats.log` | Performance metrics — packet rates, dropped packets, memory usage |
+| `suricata.log` | Startup output, config parsing, rule loading, and operational messages |
 
 ---
 
 ## Quick Reference
 
 ```bash
-# Create systemd override
+# Create or edit systemd override
 sudo systemctl edit suricata
 
-# Reload and restart
-sudo systemctl daemon-reload
-sudo systemctl restart suricata
+# Apply changes
+sudo systemctl daemon-reload && sudo systemctl restart suricata
 
-# Verify configuration
-sudo systemctl cat suricata
+# Check status
 sudo systemctl status suricata
-sudo tail -100 /var/log/suricata/suricata.log
+
+# View logs
+sudo tail -50 /var/log/suricata/suricata.log
+
+# Update rules
+sudo suricata-update
 ```
