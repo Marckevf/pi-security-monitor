@@ -106,6 +106,9 @@ Kibana dashboards built on live data:
 - **Protocol Breakdown** — network protocol distribution
 - **Top Source IPs** — most active devices on the network
 
+- <img width="1920" height="1080" alt="Screenshot 2026-03-01 at 10 47 50 PM" src="https://github.com/user-attachments/assets/94980def-c4a7-4285-93c1-3aea14fcaf4f" />
+
+
 ---
 
 ## 🗂️ Log Locations (on Pi)
